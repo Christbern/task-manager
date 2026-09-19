@@ -1,37 +1,48 @@
-import { useEffect, useState } from "react";
-import { Plus, LogOut, Search } from "lucide-react";
+import { useEffect, useMemo, useState } from "react";
+import {
+  DndContext,
+  DragOverlay,
+  PointerSensor,
+  TouchSensor,
+  useSensor,
+  useSensors,
+  type DragEndEvent,
+  type DragStartEvent,
+} from "@dnd-kit/core";
+import { Plus, LogOut, Search, Sparkles } from "lucide-react";
 import { api } from "@/lib/api";
 import { useAuth } from "@/context/AuthContext";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Select } from "@/components/ui/select";
+import { Modal } from "@/components/Modal";
 import { TaskForm } from "@/components/TaskForm";
-import { TaskItem } from "@/components/TaskItem";
+import { TaskColumn } from "@/components/TaskColumn";
+import { TaskCard } from "@/components/TaskCard";
 import type { Task, TaskInput, TaskStatus } from "@/types/task";
 
-type StatusFilter = TaskStatus | "ALL";
+const STATUSES: TaskStatus[] = ["TODO", "IN_PROGRESS", "DONE"];
 
 export function TasksPage() {
   const { user, logout } = useAuth();
   const [tasks, setTasks] = useState<Task[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-
   const [search, setSearch] = useState("");
-  const [statusFilter, setStatusFilter] = useState<StatusFilter>("ALL");
 
   const [showForm, setShowForm] = useState(false);
   const [editingTask, setEditingTask] = useState<Task | null>(null);
+  const [activeTask, setActiveTask] = useState<Task | null>(null);
+
+  const sensors = useSensors(
+    useSensor(PointerSensor, { activationConstraint: { distance: 6 } }),
+    useSensor(TouchSensor, { activationConstraint: { delay: 150, tolerance: 8 } })
+  );
 
   async function fetchTasks() {
     setLoading(true);
     setError(null);
     try {
-      const params: Record<string, string> = {};
-      if (statusFilter !== "ALL") params.status = statusFilter;
-      if (search.trim()) params.search = search.trim();
-
-      const { data } = await api.get<Task[]>("/api/tasks", { params });
+      const { data } = await api.get<Task[]>("/api/tasks");
       setTasks(data);
     } catch {
       setError("Impossible de charger les tâches");
@@ -41,11 +52,22 @@ export function TasksPage() {
   }
 
   useEffect(() => {
-    // Recherche/filtrage "live" avec un léger debounce pour éviter de spammer l'API.
-    const timeout = setTimeout(fetchTasks, 300);
-    return () => clearTimeout(timeout);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [search, statusFilter]);
+    fetchTasks();
+  }, []);
+
+  const filteredTasks = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    if (!q) return tasks;
+    return tasks.filter(
+      (t) => t.title.toLowerCase().includes(q) || t.description?.toLowerCase().includes(q)
+    );
+  }, [search, tasks]);
+
+  const tasksByStatus = useMemo(() => {
+    const grouped: Record<TaskStatus, Task[]> = { TODO: [], IN_PROGRESS: [], DONE: [] };
+    for (const t of filteredTasks) grouped[t.status].push(t);
+    return grouped;
+  }, [filteredTasks]);
 
   async function handleCreate(input: TaskInput) {
     await api.post("/api/tasks", input);
@@ -60,97 +82,136 @@ export function TasksPage() {
     await fetchTasks();
   }
 
-  async function handleDelete(id: number) {
-    if (!confirm("Supprimer cette tâche ?")) return;
-    await api.delete(`/api/tasks/${id}`);
-    await fetchTasks();
+  async function handleDelete(task: Task) {
+    if (!confirm(`Supprimer "${task.title}" ?`)) return;
+    setTasks((prev) => prev.filter((t) => t.id !== task.id));
+    try {
+      await api.delete(`/api/tasks/${task.id}`);
+    } catch {
+      fetchTasks(); // revert en cas d'échec
+    }
+  }
+
+  function handleDragStart(event: DragStartEvent) {
+    const task = tasks.find((t) => t.id === event.active.id);
+    setActiveTask(task ?? null);
+  }
+
+  async function handleDragEnd(event: DragEndEvent) {
+    const { active, over } = event;
+    setActiveTask(null);
+    if (!over) return;
+
+    const task = tasks.find((t) => t.id === active.id);
+    if (!task) return;
+
+    // La cible est soit une colonne (id = statut), soit une carte (on prend son statut).
+    const overTask = tasks.find((t) => t.id === over.id);
+    const newStatus = (overTask ? overTask.status : (over.id as TaskStatus)) as TaskStatus;
+
+    if (newStatus === task.status) return;
+
+    // Mise à jour optimiste : l'UI réagit instantanément, on synchronise ensuite avec l'API.
+    const previousTasks = tasks;
+    setTasks((prev) => prev.map((t) => (t.id === task.id ? { ...t, status: newStatus } : t)));
+
+    try {
+      await api.put(`/api/tasks/${task.id}`, {
+        title: task.title,
+        description: task.description ?? "",
+        status: newStatus,
+      });
+    } catch {
+      setTasks(previousTasks); // rollback si l'API échoue
+    }
   }
 
   return (
-    <div className="min-h-screen bg-secondary/40">
-      <header className="border-b border-border bg-background">
+    <div className="min-h-screen bg-gradient-to-b from-secondary/60 to-background">
+      <header className="sticky top-0 z-30 border-b border-border/60 bg-background/80 backdrop-blur-md">
         <div className="container flex items-center justify-between py-4">
-          <div>
-            <h1 className="text-lg font-semibold">Task Manager</h1>
-            {user && <p className="text-sm text-muted-foreground">Connecté en tant que {user.fullName}</p>}
+          <div className="flex items-center gap-2.5">
+            <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-gradient-to-br from-brand-from to-brand-to text-white shadow-sm">
+              <Sparkles className="h-4.5 w-4.5" />
+            </div>
+            <div>
+              <h1 className="text-sm font-semibold leading-none">Task Manager</h1>
+              {user && (
+                <p className="mt-0.5 text-xs text-muted-foreground">Bonjour, {user.fullName.split(" ")[0]}</p>
+              )}
+            </div>
           </div>
-          <Button variant="outline" size="sm" onClick={logout}>
+          <Button variant="ghost" size="sm" onClick={logout}>
             <LogOut className="mr-2 h-4 w-4" />
             Déconnexion
           </Button>
         </div>
       </header>
 
-      <main className="container flex flex-col gap-4 py-6">
+      <main className="container flex flex-col gap-5 py-6">
         <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-          <div className="flex flex-1 gap-2">
-            <div className="relative flex-1 max-w-sm">
-              <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-              <Input
-                placeholder="Rechercher une tâche..."
-                value={search}
-                onChange={(e) => setSearch(e.target.value)}
-                className="pl-9"
-              />
-            </div>
-            <Select
-              value={statusFilter}
-              onChange={(e) => setStatusFilter(e.target.value as StatusFilter)}
-              className="w-40"
-            >
-              <option value="ALL">Tous statuts</option>
-              <option value="TODO">À faire</option>
-              <option value="IN_PROGRESS">En cours</option>
-              <option value="DONE">Terminée</option>
-            </Select>
+          <div className="relative max-w-sm flex-1">
+            <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+            <Input
+              placeholder="Rechercher une tâche..."
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              className="pl-9"
+            />
           </div>
           <Button
             onClick={() => {
               setEditingTask(null);
               setShowForm(true);
             }}
+            className="bg-gradient-to-r from-brand-from to-brand-to shadow-sm transition-transform hover:scale-[1.02] active:scale-[0.98]"
           >
             <Plus className="mr-2 h-4 w-4" />
             Nouvelle tâche
           </Button>
         </div>
 
-        {showForm && (
-          <TaskForm
-            onSubmit={handleCreate}
-            onCancel={() => setShowForm(false)}
-          />
+        {loading && (
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+            {[0, 1, 2].map((i) => (
+              <div key={i} className="h-40 animate-pulse rounded-2xl bg-muted/60" />
+            ))}
+          </div>
         )}
-        {editingTask && (
-          <TaskForm
-            initial={editingTask}
-            onSubmit={handleUpdate}
-            onCancel={() => setEditingTask(null)}
-          />
-        )}
-
-        {loading && <p className="text-sm text-muted-foreground">Chargement...</p>}
         {error && <p className="text-sm text-destructive">{error}</p>}
-        {!loading && !error && tasks.length === 0 && (
-          <p className="py-8 text-center text-sm text-muted-foreground">
-            Aucune tâche pour le moment. Crée-en une !
-          </p>
-        )}
 
-        <div className="flex flex-col gap-2">
-          {tasks.map((task) => (
-            <TaskItem
-              key={task.id}
-              task={task}
-              onEdit={() => {
-                setShowForm(false);
-                setEditingTask(task);
-              }}
-              onDelete={() => handleDelete(task.id)}
-            />
-          ))}
-        </div>
+        {!loading && !error && (
+          <DndContext sensors={sensors} onDragStart={handleDragStart} onDragEnd={handleDragEnd}>
+            <div className="flex flex-col gap-4 sm:flex-row">
+              {STATUSES.map((status) => (
+                <TaskColumn
+                  key={status}
+                  status={status}
+                  tasks={tasksByStatus[status]}
+                  onEdit={(task) => {
+                    setShowForm(false);
+                    setEditingTask(task);
+                  }}
+                  onDelete={handleDelete}
+                />
+              ))}
+            </div>
+
+            <DragOverlay>
+              {activeTask && (
+                <TaskCard task={activeTask} onEdit={() => {}} onDelete={() => {}} isOverlay />
+              )}
+            </DragOverlay>
+          </DndContext>
+        )}
       </main>
+
+      <Modal open={showForm || editingTask !== null} onClose={() => (showForm ? setShowForm(false) : setEditingTask(null))}>
+        {showForm && <TaskForm onSubmit={handleCreate} onCancel={() => setShowForm(false)} />}
+        {editingTask && (
+          <TaskForm initial={editingTask} onSubmit={handleUpdate} onCancel={() => setEditingTask(null)} />
+        )}
+      </Modal>
     </div>
   );
 }

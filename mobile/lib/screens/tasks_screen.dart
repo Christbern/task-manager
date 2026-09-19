@@ -1,12 +1,14 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
+import '../config/app_theme.dart';
 import '../models/task.dart';
 import '../services/api_client.dart';
 import '../services/auth_service.dart';
 import '../services/task_service.dart';
-import '../widgets/task_tile.dart';
+import '../widgets/task_card.dart';
 import '../widgets/task_form_dialog.dart';
+import '../widgets/app_bottom_nav.dart';
 import 'login_screen.dart';
 
 class TasksScreen extends StatefulWidget {
@@ -18,12 +20,13 @@ class TasksScreen extends StatefulWidget {
 
 class _TasksScreenState extends State<TasksScreen> {
   final _searchController = TextEditingController();
+  final _pageController = PageController();
   Timer? _debounce;
 
-  List<Task> _tasks = [];
+  List<Task> _allTasks = [];
   bool _loading = true;
   String? _error;
-  TaskStatus? _statusFilter;
+  int _currentIndex = 0;
 
   @override
   void initState() {
@@ -34,6 +37,7 @@ class _TasksScreenState extends State<TasksScreen> {
   @override
   void dispose() {
     _searchController.dispose();
+    _pageController.dispose();
     _debounce?.cancel();
     super.dispose();
   }
@@ -44,12 +48,9 @@ class _TasksScreenState extends State<TasksScreen> {
       _error = null;
     });
     try {
-      final tasks = await context.read<TaskService>().fetchTasks(
-            status: _statusFilter,
-            search: _searchController.text,
-          );
+      final tasks = await context.read<TaskService>().fetchTasks(search: _searchController.text);
       if (!mounted) return;
-      setState(() => _tasks = tasks);
+      setState(() => _allTasks = tasks);
     } on ApiException catch (e) {
       if (!mounted) return;
       setState(() => _error = e.message);
@@ -63,8 +64,15 @@ class _TasksScreenState extends State<TasksScreen> {
     _debounce = Timer(const Duration(milliseconds: 300), _loadTasks);
   }
 
-  Future<void> _createTask() async {
-    final result = await showTaskFormSheet(context);
+  List<Task> _tasksFor(TaskStatus status) =>
+      _allTasks.where((t) => t.status == status).toList(growable: false);
+
+  Map<TaskStatus, int> get _counts => {
+        for (final s in TaskStatus.values) s: _tasksFor(s).length,
+      };
+
+  Future<void> _createTask({TaskStatus? defaultStatus}) async {
+    final result = await showTaskFormSheet(context, initialStatus: defaultStatus);
     if (result == null) return;
     try {
       await context.read<TaskService>().createTask(
@@ -109,10 +117,47 @@ class _TasksScreenState extends State<TasksScreen> {
       ),
     );
     if (confirmed != true) return;
+
+    // Suppression optimiste : la carte disparaît immédiatement, rollback si l'API échoue.
+    final previous = _allTasks;
+    setState(() => _allTasks = _allTasks.where((t) => t.id != task.id).toList());
     try {
       await context.read<TaskService>().deleteTask(task.id);
-      _loadTasks();
     } on ApiException catch (e) {
+      setState(() => _allTasks = previous);
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(e.message)));
+    }
+  }
+
+  /// Appelé quand une tâche est déposée sur un onglet de la bottom navbar.
+  Future<void> _onTaskDropped(Task task, TaskStatus newStatus) async {
+    final previous = _allTasks;
+    // Mise à jour optimiste : la carte change de colonne instantanément.
+    setState(() {
+      _allTasks = _allTasks
+          .map((t) => t.id == task.id
+              ? Task(
+                  id: t.id,
+                  title: t.title,
+                  description: t.description,
+                  status: newStatus,
+                  createdAt: t.createdAt,
+                  updatedAt: DateTime.now(),
+                )
+              : t)
+          .toList();
+    });
+
+    try {
+      await context.read<TaskService>().updateTask(
+            id: task.id,
+            title: task.title,
+            description: task.description ?? '',
+            status: newStatus,
+          );
+    } on ApiException catch (e) {
+      setState(() => _allTasks = previous); // rollback
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(e.message)));
     }
@@ -129,9 +174,11 @@ class _TasksScreenState extends State<TasksScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final currentStatus = kNavDestinations[_currentIndex].status;
+
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Mes tâches'),
+        title: const Text('Mes tâches', style: TextStyle(fontWeight: FontWeight.w700)),
         actions: [
           IconButton(icon: const Icon(Icons.logout), tooltip: 'Déconnexion', onPressed: _logout),
         ],
@@ -139,62 +186,83 @@ class _TasksScreenState extends State<TasksScreen> {
       body: Column(
         children: [
           Padding(
-            padding: const EdgeInsets.all(12),
-            child: Row(
-              children: [
-                Expanded(
-                  child: TextField(
-                    controller: _searchController,
-                    onChanged: _onSearchChanged,
-                    decoration: const InputDecoration(
-                      hintText: 'Rechercher...',
-                      prefixIcon: Icon(Icons.search),
-                      border: OutlineInputBorder(),
-                      isDense: true,
-                    ),
-                  ),
-                ),
-                const SizedBox(width: 8),
-                DropdownButton<TaskStatus?>(
-                  value: _statusFilter,
-                  hint: const Text('Statut'),
-                  items: [
-                    const DropdownMenuItem(value: null, child: Text('Tous')),
-                    ...TaskStatus.values.map((s) => DropdownMenuItem(value: s, child: Text(s.label))),
-                  ],
-                  onChanged: (value) {
-                    setState(() => _statusFilter = value);
-                    _loadTasks();
-                  },
-                ),
-              ],
+            padding: const EdgeInsets.fromLTRB(16, 12, 16, 8),
+            child: TextField(
+              controller: _searchController,
+              onChanged: _onSearchChanged,
+              decoration: const InputDecoration(
+                hintText: 'Rechercher une tâche...',
+                prefixIcon: Icon(Icons.search, size: 20),
+                isDense: true,
+                contentPadding: EdgeInsets.symmetric(vertical: 12),
+              ),
             ),
           ),
-          Expanded(child: _buildBody()),
+          Expanded(
+            child: _loading
+                ? const Center(child: CircularProgressIndicator())
+                : _error != null
+                    ? Center(child: Text(_error!))
+                    : PageView(
+                        controller: _pageController,
+                        onPageChanged: (i) => setState(() => _currentIndex = i),
+                        children: kNavDestinations.map((dest) => _buildList(dest.status)).toList(),
+                      ),
+          ),
         ],
       ),
       floatingActionButton: FloatingActionButton(
-        onPressed: _createTask,
-        child: const Icon(Icons.add),
+        onPressed: () => _createTask(defaultStatus: currentStatus),
+        backgroundColor: AppColors.of(currentStatus),
+        child: const Icon(Icons.add, color: Colors.white),
+      ),
+      bottomNavigationBar: AppBottomNav(
+        currentIndex: _currentIndex,
+        counts: _counts,
+        onTap: (index) {
+          setState(() => _currentIndex = index);
+          _pageController.animateToPage(
+            index,
+            duration: const Duration(milliseconds: 280),
+            curve: Curves.easeOutCubic,
+          );
+        },
+        onTaskDropped: _onTaskDropped,
       ),
     );
   }
 
-  Widget _buildBody() {
-    if (_loading) return const Center(child: CircularProgressIndicator());
-    if (_error != null) return Center(child: Text(_error!));
-    if (_tasks.isEmpty) {
-      return const Center(child: Text('Aucune tâche pour le moment.'));
+  Widget _buildList(TaskStatus status) {
+    final tasks = _tasksFor(status);
+
+    if (tasks.isEmpty) {
+      return Center(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(Icons.inbox_outlined, size: 40, color: Colors.grey.shade300),
+            const SizedBox(height: 8),
+            Text('Aucune tâche ici', style: TextStyle(color: Colors.grey.shade400)),
+            const SizedBox(height: 4),
+            Text(
+              'Glisse une carte sur un onglet pour la déplacer',
+              style: TextStyle(color: Colors.grey.shade300, fontSize: 12),
+            ),
+          ],
+        ),
+      );
     }
+
     return RefreshIndicator(
       onRefresh: _loadTasks,
       child: ListView.builder(
-        itemCount: _tasks.length,
+        padding: const EdgeInsets.fromLTRB(16, 4, 16, 90),
+        itemCount: tasks.length,
         itemBuilder: (context, index) {
-          final task = _tasks[index];
-          return TaskTile(
+          final task = tasks[index];
+          return TaskCard(
             task: task,
-            onEdit: () => _editTask(task),
+            onTap: () => _editTask(task),
             onDelete: () => _deleteTask(task),
           );
         },

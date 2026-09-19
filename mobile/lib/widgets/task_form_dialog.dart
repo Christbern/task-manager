@@ -10,20 +10,22 @@ class TaskFormResult {
 
 /// Ouvre le formulaire de création/édition en bottom sheet et retourne le
 /// résultat saisi, ou null si l'utilisateur annule.
-Future<TaskFormResult?> showTaskFormSheet(BuildContext context, {Task? initial}) {
+/// [initialStatus] pré-remplit le statut lors d'une création (ex: l'onglet actif).
+Future<TaskFormResult?> showTaskFormSheet(BuildContext context, {Task? initial, TaskStatus? initialStatus}) {
   return showModalBottomSheet<TaskFormResult>(
     context: context,
     isScrollControlled: true,
     shape: const RoundedRectangleBorder(
       borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
     ),
-    builder: (context) => _TaskFormSheet(initial: initial),
+    builder: (context) => _TaskFormSheet(initial: initial, initialStatus: initialStatus),
   );
 }
 
 class _TaskFormSheet extends StatefulWidget {
   final Task? initial;
-  const _TaskFormSheet({this.initial});
+  final TaskStatus? initialStatus;
+  const _TaskFormSheet({this.initial, this.initialStatus});
 
   @override
   State<_TaskFormSheet> createState() => _TaskFormSheetState();
@@ -40,7 +42,7 @@ class _TaskFormSheetState extends State<_TaskFormSheet> {
     super.initState();
     _titleController = TextEditingController(text: widget.initial?.title ?? '');
     _descController = TextEditingController(text: widget.initial?.description ?? '');
-    _status = widget.initial?.status ?? TaskStatus.todo;
+    _status = widget.initial?.status ?? widget.initialStatus ?? TaskStatus.todo;
   }
 
   @override

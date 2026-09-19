@@ -1,4 +1,5 @@
 import { useState, type FormEvent } from "react";
+import { X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
@@ -34,33 +35,60 @@ export function TaskForm({ initial, onSubmit, onCancel }: TaskFormProps) {
   }
 
   return (
-    <form onSubmit={handleSubmit} className="flex flex-col gap-3 rounded-lg border border-border bg-card p-4">
-      <Input
-        placeholder="Titre de la tâche"
-        value={title}
-        onChange={(e) => setTitle(e.target.value)}
-        required
-      />
-      <Textarea
-        placeholder="Description (optionnelle)"
-        value={description ?? ""}
-        onChange={(e) => setDescription(e.target.value)}
-      />
-      <Select value={status} onChange={(e) => setStatus(e.target.value as TaskStatus)}>
-        {(Object.keys(STATUS_LABELS) as TaskStatus[]).map((s) => (
-          <option key={s} value={s}>
-            {STATUS_LABELS[s]}
-          </option>
-        ))}
-      </Select>
-      <div className="flex justify-end gap-2">
-        <Button type="button" variant="outline" onClick={onCancel} disabled={saving}>
-          Annuler
-        </Button>
-        <Button type="submit" disabled={saving}>
-          {saving ? "Enregistrement..." : "Enregistrer"}
-        </Button>
+    <div className="overflow-hidden rounded-2xl border border-border bg-card shadow-2xl">
+      <div className="flex items-center justify-between border-b border-border px-5 py-4">
+        <h2 className="text-base font-semibold">{initial ? "Modifier la tâche" : "Nouvelle tâche"}</h2>
+        <button
+          onClick={onCancel}
+          className="rounded-full p-1 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+          aria-label="Fermer"
+        >
+          <X className="h-4 w-4" />
+        </button>
       </div>
-    </form>
+
+      <form onSubmit={handleSubmit} className="flex flex-col gap-4 p-5">
+        <div className="flex flex-col gap-1.5">
+          <label className="text-xs font-medium text-muted-foreground">Titre</label>
+          <Input
+            placeholder="Ex : Préparer la démo client"
+            value={title}
+            onChange={(e) => setTitle(e.target.value)}
+            autoFocus
+            required
+          />
+        </div>
+
+        <div className="flex flex-col gap-1.5">
+          <label className="text-xs font-medium text-muted-foreground">Description</label>
+          <Textarea
+            placeholder="Détails (optionnel)"
+            value={description ?? ""}
+            onChange={(e) => setDescription(e.target.value)}
+            rows={3}
+          />
+        </div>
+
+        <div className="flex flex-col gap-1.5">
+          <label className="text-xs font-medium text-muted-foreground">Statut</label>
+          <Select value={status} onChange={(e) => setStatus(e.target.value as TaskStatus)}>
+            {(Object.keys(STATUS_LABELS) as TaskStatus[]).map((s) => (
+              <option key={s} value={s}>
+                {STATUS_LABELS[s]}
+              </option>
+            ))}
+          </Select>
+        </div>
+
+        <div className="mt-1 flex justify-end gap-2">
+          <Button type="button" variant="outline" onClick={onCancel} disabled={saving}>
+            Annuler
+          </Button>
+          <Button type="submit" disabled={saving || !title.trim()}>
+            {saving ? "Enregistrement..." : "Enregistrer"}
+          </Button>
+        </div>
+      </form>
+    </div>
   );
 }
