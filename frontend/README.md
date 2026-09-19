@@ -1,75 +1,32 @@
-# React + TypeScript + Vite
+# Task Manager — Frontend (React + Vite + TSX)
 
-This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
+## Stack
+- React 18 + Vite + TypeScript
+- Tailwind CSS + composants style Shadcn UI (Button, Input, Card, Badge, Select, Textarea)
+- React Router pour la navigation
+- Axios avec injection automatique du JWT
 
-Currently, two official plugins are available:
+## Lancer en local
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Oxc](https://oxc.rs)
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/)
-
-## React Compiler
-
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
-
-## Expanding the ESLint configuration
-
-If you are developing a production application, we recommend updating the configuration to enable type-aware lint rules:
-
-```js
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
-
-      // Remove tseslint.configs.recommended and replace with this
-      tseslint.configs.recommendedTypeChecked,
-      // Alternatively, use this for stricter rules
-      tseslint.configs.strictTypeChecked,
-      // Optionally, add this for stylistic rules
-      tseslint.configs.stylisticTypeChecked,
-
-      // Other configs...
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
-
+```bash
+npm install
+cp .env.example .env   # ajuster VITE_API_URL si besoin
+npm run dev
 ```
 
-You can also install [eslint-plugin-react-x](https://npmx.dev/package/eslint-plugin-react-x) and [eslint-plugin-react-dom](https://npmx.dev/package/eslint-plugin-react-dom) for React-specific lint rules:
+L'app tourne sur `http://localhost:5173` et attend le backend sur `http://localhost:8080` (voir le README du backend).
 
-```js
-// eslint.config.js
-import reactX from 'eslint-plugin-react-x'
-import reactDom from 'eslint-plugin-react-dom'
+## Fonctionnalités
+- Inscription / connexion (JWT stocké en `localStorage`, injecté sur chaque requête API)
+- Déconnexion automatique si le token est invalide/expiré (intercepteur Axios sur les 401)
+- Liste des tâches avec recherche texte + filtre par statut (debounce 300ms pour ne pas spammer l'API)
+- Création, édition, suppression de tâches
+- Gestion des erreurs API (messages affichés dans l'UI)
 
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
-      // Enable lint rules for React
-      reactX.configs['recommended-typescript'],
-      // Enable lint rules for React DOM
-      reactDom.configs.recommended,
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
+## Build production
 
+```bash
+npm run build
 ```
+
+Génère `dist/` (fichiers statiques), servis ensuite via Nginx dans le `Dockerfile`.
